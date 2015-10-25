@@ -1,7 +1,7 @@
 YLGIFImage
 ==========
 
-Asynchronized GIF image class and Image viewer supporting play/stop GIF images. 
+Asynchronized GIF image class and Image viewer supporting play/stop GIF/APNG images. 
 
 It just use very less memory. Following GIF usually will cost almost 600MB memory if it is fully decoded (800x600x389x4 Bytes), but using YLGIFImage, it just use about 30MB memory.
 
