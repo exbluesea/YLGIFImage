@@ -10,7 +10,7 @@
 #import "YLGIFImage.h"
 #import <QuartzCore/QuartzCore.h>
 
-#define kGMCFCoreFoundationVersionNumber_iPhoneOS_8_0 1140.100000
+#define IS_IOS8_OR_LATER() (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_8_0)
 
 @interface YLImageView ()
 
@@ -107,7 +107,7 @@ const NSTimeInterval kMaxTimeStep = 1; // note: To avoid spiral-o-death
 	_shouldAnimate = ([[UIApplication sharedApplication] applicationState] == UIApplicationStateActive);
 
     if ([image isKindOfClass:[YLGIFImage class]] && image.images) {
-		if (kCFCoreFoundationVersionNumber >= kGMCFCoreFoundationVersionNumber_iPhoneOS_8_0) {
+		if (IS_IOS8_OR_LATER()) {
 			UIImage *firstFrame = [(YLGIFImage*)image getFrameWithIndex:0
 																preload:NO];
 			if ([firstFrame isKindOfClass:[UIImage class]])
@@ -322,8 +322,22 @@ const NSTimeInterval kMaxTimeStep = 1; // note: To avoid spiral-o-death
 	}
 }
 
-
-
+- (void)setImageName:(NSString *)imageName
+{
+    _imageName = imageName;
+    if ([imageName hasSuffix:@".gif"]) {
+        self.image = [YLGIFImage imageNamed:[imageName substringToIndex:imageName.length - 4]];
+    } else if ([imageName hasSuffix:@".apng"]) {
+        NSAssert(IS_IOS8_OR_LATER(), @"Only iOS8 or later support APNG format");
+        self.image = [YLAPNGImage imageNamed:[imageName substringToIndex:imageName.length - 5]];
+    } else {
+        if (IS_IOS8_OR_LATER()) {
+            self.image = [YLAPNGImage imageNamed:imageName];
+        } else {
+            self.image = [YLGIFImage imageNamed:imageName];
+        }
+    }
+}
 @end
 
 

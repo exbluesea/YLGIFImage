@@ -12,48 +12,11 @@
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <ImageIO/ImageIO.h>
 
-
-
-inline static NSTimeInterval CGImageSourceGetGifFrameDelay(CGImageSourceRef imageSource, NSUInteger index)
-{
-    NSTimeInterval frameDuration = 0;
-    CFDictionaryRef theImageProperties;
-    if ((theImageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, index, NULL))) {
-        CFDictionaryRef gifProperties;
-        if (CFDictionaryGetValueIfPresent(theImageProperties, kCGImagePropertyGIFDictionary, (const void **)&gifProperties)) {
-            const void *frameDurationValue;
-            if (CFDictionaryGetValueIfPresent(gifProperties, kCGImagePropertyGIFUnclampedDelayTime, &frameDurationValue)) {
-                frameDuration = [(__bridge NSNumber *)frameDurationValue doubleValue];
-                if (frameDuration <= 0) {
-                    if (CFDictionaryGetValueIfPresent(gifProperties, kCGImagePropertyGIFDelayTime, &frameDurationValue)) {
-                        frameDuration = [(__bridge NSNumber *)frameDurationValue doubleValue];
-                    }
-                }
-            }
-        }
-        CFRelease(theImageProperties);
-    }
-    
-#ifndef OLExactGIFRepresentation
-    //Implement as Browsers do.
-    //See:  http://nullsleep.tumblr.com/post/16524517190/animated-gif-minimum-frame-delay-browser-compatibility
-    //Also: http://blogs.msdn.com/b/ieinternals/archive/2010/06/08/animated-gifs-slow-down-to-under-20-frames-per-second.aspx
-    
-    if (frameDuration < 0.02 - FLT_EPSILON) {
-        frameDuration = 0.1;
-    }
+#if TARGET_INTERFACE_BUILDER
+#define pathForResource(_name, _type) [[NSBundle bundleForClass:[self class]] pathForResource:_name ofType:_type]
+#else
+#define pathForResource(_name, _type) [[NSBundle mainBundle] pathForResource:_name ofType:_type]
 #endif
-    return frameDuration;
-}
-
-
-
-inline static BOOL CGImageSourceContainsAnimatedGif(CGImageSourceRef imageSource)
-{
-    return imageSource && UTTypeConformsTo(CGImageSourceGetType(imageSource), kUTTypeGIF) && CGImageSourceGetCount(imageSource) > 1;
-}
-
-
 
 inline static BOOL isRetinaFilePath(NSString *path)
 {
@@ -90,11 +53,48 @@ inline static BOOL isRetinaFilePath(NSString *path)
 
 #pragma mark - Class Methods
 
++ (BOOL)isSourceContainsImage:(CGImageSourceRef)imageSource
+{
+    return imageSource && UTTypeConformsTo(CGImageSourceGetType(imageSource), kUTTypeGIF) && CGImageSourceGetCount(imageSource) > 1;
+}
 
++ (NSTimeInterval)imageSource:(CGImageSourceRef)imageSource frameDelayAtIndex:(NSInteger)index
+{
+    NSTimeInterval frameDuration = 0;
+    CFDictionaryRef theImageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, index, NULL);
+    NSDictionary *properties = [(__bridge NSDictionary *)(theImageProperties) valueForKey:(id)kCGImagePropertyGIFDictionary];
+    frameDuration = [properties[(id)kCGImagePropertyGIFUnclampedDelayTime] doubleValue];
+    if (frameDuration <= 0) {
+        frameDuration = [properties[(id)kCGImagePropertyGIFDelayTime] doubleValue];
+    }
+    
+    if (theImageProperties) {
+        CFRelease(theImageProperties);
+    }
+    
+#ifndef OLExactGIFRepresentation
+    //Implement as Browsers do.
+    //See:  http://nullsleep.tumblr.com/post/16524517190/animated-gif-minimum-frame-delay-browser-compatibility
+    //Also: http://blogs.msdn.com/b/ieinternals/archive/2010/06/08/animated-gifs-slow-down-to-under-20-frames-per-second.aspx
+    
+    if (frameDuration < 0.02 - FLT_EPSILON) {
+        frameDuration = 0.1;
+    }
+#endif
+    return frameDuration;
+}
+
++ (NSUInteger)imageSourceLoopCount:(CGImageSourceRef)imageSource
+{
+    NSDictionary *imageProperties = CFBridgingRelease(CGImageSourceCopyProperties(imageSource, NULL));
+    NSDictionary *gifProperties = [imageProperties objectForKey:(NSString *)kCGImagePropertyGIFDictionary];
+    return [gifProperties[(id)kCGImagePropertyGIFLoopCount] unsignedIntegerValue];
+}
 
 + (id)imageNamed:(NSString *)name
 {
-    NSString *path = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:name];
+    BOOL hasSuffix = [name hasSuffix:@".gif"];
+    NSString *path = pathForResource(name, hasSuffix ? nil : @"gif");
     
     return ([[NSFileManager defaultManager] fileExistsAtPath:path]) ? [self imageWithContentsOfFile:path] : nil;
 }
@@ -125,7 +125,7 @@ inline static BOOL isRetinaFilePath(NSString *path)
     CGImageSourceRef imageSource = CGImageSourceCreateWithData((__bridge CFDataRef)(data), NULL);
     UIImage *image;
     
-    if (CGImageSourceContainsAnimatedGif(imageSource)) {
+    if ([self isSourceContainsImage:imageSource]) {
         image = [[self alloc] initWithCGImageSource:imageSource scale:scale];
     }
 	else {
@@ -167,7 +167,7 @@ inline static BOOL isRetinaFilePath(NSString *path)
     }
 	
     CGImageSourceRef imageSource = CGImageSourceCreateWithData((__bridge CFDataRef)(data), NULL);
-    if (CGImageSourceContainsAnimatedGif(imageSource)) {
+    if ([self.class isSourceContainsImage:imageSource]) {
         self = [self initWithCGImageSource:imageSource
 									 scale:scale];
     }
@@ -207,11 +207,8 @@ inline static BOOL isRetinaFilePath(NSString *path)
     
     NSUInteger numberOfFrames = CGImageSourceGetCount(imageSource);
     
-    NSDictionary *imageProperties = CFBridgingRelease(CGImageSourceCopyProperties(imageSource, NULL));
-    NSDictionary *gifProperties = [imageProperties objectForKey:(NSString *)kCGImagePropertyGIFDictionary];
-    
     self.frameDurations = (NSTimeInterval *)malloc(numberOfFrames  * sizeof(NSTimeInterval));
-    self.loopCount = [gifProperties[(NSString *)kCGImagePropertyGIFLoopCount] unsignedIntegerValue];
+    self.loopCount = [self.class imageSourceLoopCount:imageSource];
     self.images = [NSMutableArray arrayWithCapacity:numberOfFrames];
 	
 	_scale = scale;
@@ -220,7 +217,7 @@ inline static BOOL isRetinaFilePath(NSString *path)
 	dispatch_async(readFrameQueue, ^{
 		@synchronized(self.images) {
 			NSNull *aNull = [NSNull null];
-			NSTimeInterval frameDuration = CGImageSourceGetGifFrameDelay(imageSource, 0);
+			NSTimeInterval frameDuration = [self.class imageSource:imageSource frameDelayAtIndex:0];
 			for (NSUInteger i = 0; i < numberOfFrames; i ++) {
 				[self.images addObject:aNull];
 				self.frameDurations[i] = frameDuration; // Assume that all frames have the same duration.
@@ -235,7 +232,7 @@ inline static BOOL isRetinaFilePath(NSString *path)
 			}
 			// Find out how many frames we can prefetch and keep in RAM.
 			NSUInteger frameDataSize = [YLGIFImage sizeOfImageRef:image];
-			NSUInteger totalSize = numberOfFrames * frameDataSize;
+			//NSUInteger totalSize = numberOfFrames * frameDataSize;
 			NSUInteger maxPrefetchedNum = (NSUInteger)floor(2000000.0 / frameDataSize); // Prefetched frames should use max 2 MB RAM in total.
 			if (maxPrefetchedNum < numberOfFrames) {
 				// If we can't keep all frames in RAM, the CPU will have to decode each frame over and over anyway,
@@ -256,7 +253,7 @@ inline static BOOL isRetinaFilePath(NSString *path)
 		// Figure out the actual duration.
 		NSTimeInterval tot = 0;
 		for (NSUInteger i = 0; i < numberOfFrames; ++i) {
-			NSTimeInterval frameDuration = CGImageSourceGetGifFrameDelay(imageSource, i);
+			NSTimeInterval frameDuration = [self.class imageSource:imageSource frameDelayAtIndex:i];
 			self.frameDurations[i] = frameDuration;
 			tot += frameDuration;
 		}
@@ -442,8 +439,52 @@ inline static BOOL isRetinaFilePath(NSString *path)
     }
 }
 
-
-
 @end
 
+@implementation YLAPNGImage
++ (id)imageNamed:(NSString *)name
+{
+    BOOL hasSuffix = [name hasSuffix:@".apng"];
+    NSString *path = pathForResource(name, hasSuffix ? nil : @"apng");
+    return ([[NSFileManager defaultManager] fileExistsAtPath:path]) ? [self imageWithContentsOfFile:path] : nil;
+}
+
++ (BOOL)isSourceContainsImage:(CGImageSourceRef)imageSource
+{
+    return imageSource && UTTypeConformsTo(CGImageSourceGetType(imageSource), kUTTypePNG) && CGImageSourceGetCount(imageSource) > 1;
+}
+
++ (NSTimeInterval)imageSource:(CGImageSourceRef)imageSource frameDelayAtIndex:(NSInteger)index
+{
+    NSTimeInterval frameDuration = 0;
+    CFDictionaryRef theImageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, index, NULL);
+    NSDictionary *properties = [(__bridge NSDictionary *)(theImageProperties) valueForKey:(id)kCGImagePropertyPNGDictionary];
+    frameDuration = [properties[(id)kCGImagePropertyAPNGUnclampedDelayTime] doubleValue];
+    if (frameDuration <= 0) {
+        frameDuration = [properties[(id)kCGImagePropertyAPNGDelayTime] doubleValue];
+    }
+    
+    if (theImageProperties) {
+        CFRelease(theImageProperties);
+    }
+    
+#ifndef OLExactGIFRepresentation
+    //Implement as Browsers do.
+    //See:  http://nullsleep.tumblr.com/post/16524517190/animated-gif-minimum-frame-delay-browser-compatibility
+    //Also: http://blogs.msdn.com/b/ieinternals/archive/2010/06/08/animated-gifs-slow-down-to-under-20-frames-per-second.aspx
+    
+    if (frameDuration < 0.02 - FLT_EPSILON) {
+        frameDuration = 0.1;
+    }
+#endif
+    return frameDuration;
+}
+
++ (NSUInteger)imageSourceLoopCount:(CGImageSourceRef)imageSource
+{
+    NSDictionary *imageProperties = CFBridgingRelease(CGImageSourceCopyProperties(imageSource, NULL));
+    NSDictionary *apngProperties = [imageProperties objectForKey:(NSString *)kCGImagePropertyPNGDictionary];
+    return [apngProperties[(id)kCGImagePropertyAPNGLoopCount] unsignedIntegerValue];
+}
+@end
 

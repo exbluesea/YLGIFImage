@@ -42,3 +42,7 @@
  */
 - (void)dropPrefetchedFrames;
 @end
+
+@interface YLAPNGImage : YLGIFImage
+
+@end

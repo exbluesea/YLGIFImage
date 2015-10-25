@@ -19,11 +19,12 @@
 - (void)gifImageViewDidStopAnimating:(YLImageView*)view;
 @end
 
-
+IB_DESIGNABLE
 @interface YLImageView : UIImageView
 
 @property (nonatomic, copy) NSString *runLoopMode;
 @property (nonatomic, weak) id<YLImageViewDelegate> delegate;
+@property (nonatomic, copy) IBInspectable NSString *imageName;
 
 -(void)showFrameIndex:(NSUInteger)frameNumber;
 
